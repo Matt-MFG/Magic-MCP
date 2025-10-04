@@ -1,0 +1,258 @@
+openapi: 3.0.0
+info:
+  title: Simple Task API
+  description: A simple API for managing tasks
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.example.com/v1
+    description: Production server
+
+security:
+  - bearerAuth: []
+
+paths:
+  /tasks:
+    get:
+      summary: List all tasks
+      description: Retrieve a list of all tasks
+      operationId: list_tasks
+      tags:
+        - tasks
+      parameters:
+        - name: status
+          in: query
+          description: Filter by task status
+          required: false
+          schema:
+            type: string
+            enum: [pending, in_progress, completed]
+        - name: limit
+          in: query
+          description: Maximum number of tasks to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: Successfully retrieved tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tasks:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Task'
+                  total:
+                    type: integer
+        '401':
+          description: Unauthorized
+
+    post:
+      summary: Create a new task
+      description: Create a new task with the provided details
+      operationId: create_task
+      tags:
+        - tasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - title
+              properties:
+                title:
+                  type: string
+                  description: The task title
+                  minLength: 1
+                  maxLength: 200
+                description:
+                  type: string
+                  description: Detailed description of the task
+                  maxLength: 1000
+                priority:
+                  type: string
+                  enum: [low, medium, high]
+                  default: medium
+                due_date:
+                  type: string
+                  format: date-time
+                  description: When the task is due
+      responses:
+        '201':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid request
+        '401':
+          description: Unauthorized
+
+  /tasks/{id}:
+    get:
+      summary: Get a task by ID
+      description: Retrieve details of a specific task
+      operationId: get_task
+      tags:
+        - tasks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The task ID
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Task found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Task not found
+        '401':
+          description: Unauthorized
+
+    patch:
+      summary: Update a task
+      description: Update specific fields of a task
+      operationId: update_task
+      tags:
+        - tasks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The task ID
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                description:
+                  type: string
+                  maxLength: 1000
+                status:
+                  type: string
+                  enum: [pending, in_progress, completed]
+                priority:
+                  type: string
+                  enum: [low, medium, high]
+                due_date:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Task updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid request
+        '404':
+          description: Task not found
+        '401':
+          description: Unauthorized
+
+    delete:
+      summary: Delete a task
+      description: Permanently delete a task
+      operationId: delete_task
+      tags:
+        - tasks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          description: The task ID
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Task deleted successfully
+        '404':
+          description: Task not found
+        '401':
+          description: Unauthorized
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Task:
+      type: object
+      required:
+        - id
+        - title
+        - status
+        - created_at
+      properties:
+        id:
+          type: string
+          description: Unique task identifier
+          example: "task_123abc"
+        title:
+          type: string
+          description: The task title
+          example: "Complete project documentation"
+        description:
+          type: string
+          description: Detailed description
+          example: "Write comprehensive documentation for the API"
+        status:
+          type: string
+          enum: [pending, in_progress, completed]
+          description: Current task status
+          example: "in_progress"
+        priority:
+          type: string
+          enum: [low, medium, high]
+          description: Task priority level
+          example: "high"
+        due_date:
+          type: string
+          format: date-time
+          description: When the task is due
+          example: "2025-10-15T10:00:00Z"
+        created_at:
+          type: string
+          format: date-time
+          description: When the task was created
+          example: "2025-10-01T09:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: When the task was last updated
+          example: "2025-10-04T14:30:00Z"
+
+tags:
+  - name: tasks
+    description: Task management operations
