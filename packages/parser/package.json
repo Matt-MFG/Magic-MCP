@@ -2,6 +2,7 @@
   "name": "@magic-mcp/parser",
   "version": "0.1.0",
   "description": "API schema parsers for Magic MCP (OpenAPI, GraphQL, etc.)",
+  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

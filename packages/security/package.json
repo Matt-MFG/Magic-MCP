@@ -2,6 +2,7 @@
   "name": "@magic-mcp/security",
   "version": "0.1.0",
   "description": "Security scanning and hardening for Magic MCP",
+  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

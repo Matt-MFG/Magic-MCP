@@ -2,6 +2,7 @@
   "name": "@magic-mcp/generator",
   "version": "0.1.0",
   "description": "AI-powered MCP code generator for Magic MCP",
+  "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
