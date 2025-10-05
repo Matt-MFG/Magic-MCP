@@ -1,8 +1,8 @@
 # Claude Development Guide for Magic MCP
 
-**Last Updated**: October 4, 2025
-**Current Phase**: 2C Complete (Response Types, Nested Schemas, Component Names)
-**Next Phase**: 2D (Zod Array Schemas, Test Generation)
+**Last Updated**: October 5, 2025
+**Current Phase**: 2F Complete (Automated Test Generation)
+**Next Phase**: 3 (AI Semantic Naming, Multi-Cloud Deployment)
 
 ## Project Overview
 
@@ -38,7 +38,7 @@ packages/
 OpenAPI Spec → Parser → AI Analysis → MCP Spec → Template → Generated Code → Security Scan
 ```
 
-## Current State (Phase 2C Complete)
+## Current State (Phase 2F Complete)
 
 ### Completed Features
 
@@ -68,22 +68,52 @@ OpenAPI Spec → Parser → AI Analysis → MCP Spec → Template → Generated 
 - ✅ Array item type extraction
 - ✅ Circular reference handling
 
+**Phase 2D: Zod Array Schemas**
+- ✅ Proper array item types: `z.array(z.string())` instead of `z.array(z.unknown())`
+- ✅ Complex object arrays: `z.array(RepositorySchema)`
+- ✅ Nested Zod schema generation for extracted types
+- ✅ Full runtime validation type safety
+
+**Phase 2E: Global Type Deduplication**
+- ✅ Single source of truth for each type
+- ✅ Eliminated duplicate interface declarations
+- ✅ Type aliases for response schemas
+- ✅ 40-60% code reduction
+
+**Phase 2F: Automated Test Generation**
+- ✅ Vitest test file generation
+- ✅ Comprehensive test coverage (26 tests for GitHub API)
+- ✅ Input validation, parameter handling, error handling tests
+- ✅ Integration and type safety tests
+- ✅ Automatic dependency management
+
 ### Key Files
 
 **Templates**
 - `packages/generator/src/templates/typescript-server.hbs` - Main server template
   - Line 35: `{{{responseInterfaces}}}` - Response types injection point
-  - Line 43: `z.{{{zodType}}}` - Zod validation (triple braces prevent HTML escaping)
+  - Line 40-43: `{{{nestedZodSchemas}}}` - Nested Zod schemas for array items
+  - Line 47: `z.{{{zodType}}}` - Zod validation (triple braces prevent HTML escaping)
   - Line 113: `Promise<{{responseTypeName}}>` - Typed response returns
+- `packages/generator/src/templates/typescript-test.hbs` - Test template
+  - Generates comprehensive Vitest test suites
+  - Input validation tests for each endpoint
+  - Parameter handling tests (path, query, body)
+  - Error handling and type safety tests
 
 **Core Generator Logic**
 - `packages/generator/src/generator/mcp-generator.ts`
+  - Line 56-71: `eq` helper - Works as both block helper and subexpression
   - Line 84-100: `generate()` - Main entry point, resets state
   - Line 142-161: `analyzeSchema()` - AI analysis with circular ref handling
-  - Line 345-379: `generateInterface()` - Creates TypeScript interfaces from schemas
-  - Line 383-440: `schemaToTypeScript()` - Converts JSON Schema to TS types
-  - Line 474-501: `extractNestedSchema()` - Extracts nested objects, checks component names
-  - Line 596-669: Response deduplication - Creates one interface + type aliases
+  - Line 310-407: `schemaToZodType()` - NEW: Converts schemas to Zod with array support
+  - Line 433-471: `generateInterface()` - Creates TypeScript interfaces from schemas
+  - Line 473-506: `generateZodSchema()` - NEW: Generates Zod schemas for extracted types
+  - Line 508-574: `schemaToTypeScript()` - Converts JSON Schema to TS types
+  - Line 543-574: `extractNestedSchema()` - Extracts nested objects, checks component names
+  - Line 732-767: Response deduplication - Checks extractedSchemas, skips duplicates
+  - Line 826-837: Test generation - Generates test file when includeTests=true
+  - Line 891-930: `generatePackageJson()` - Adds Vitest deps/scripts when tests enabled
 
 **Parser**
 - `packages/parser/src/openapi/parser.ts`

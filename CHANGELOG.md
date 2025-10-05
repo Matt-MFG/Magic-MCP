@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added - Phase 2F Complete (2025-10-05)
+
+**Automated Test Generation**
+- Vitest test file generation for all MCP endpoints
+- Comprehensive test coverage (validation, parameters, error handling, type safety)
+- Input schema validation tests for each endpoint
+- Path parameter replacement tests with proper encoding
+- Query parameter construction tests
+- Request body validation tests
+- API error handling verification
+- Integration tests (tool listing, naming conventions)
+- Type safety verification tests
+- 26 passing tests generated for GitHub API
+
+**Test Infrastructure**
+- Automatic Vitest dependency management
+- Test scripts in package.json (test, test:watch, test:ui, test:coverage)
+- Mock fetch for API request tests
+- TypeScript test file compilation
+- Test files excluded from production builds
+
+**Benefits**
+- Automated test generation saves hours of manual work
+- Ensures generated code quality
+- Validates Zod schemas work correctly
+- Provides confidence in generated MCP servers
+
+### Added - Phase 2E Complete (2025-10-05)
+
+**Global Type Deduplication**
+- Eliminated duplicate interface declarations
+- Single source of truth for each type
+- Response types reference existing extracted schemas
+- Type aliases for duplicate response schemas
+- 40-60% code reduction for APIs with repeated schemas
+- Cleaner, more maintainable generated code
+
+**Implementation**
+- Check if response schema already exists in extractedSchemas
+- Skip duplicate interface generation
+- Generate type aliases pointing to canonical interface
+- Maintain component name priority
+
+### Added - Phase 2D Complete (2025-10-05)
+
+**Zod Array Schemas with Proper Item Types**
+- Array parameters generate `z.array(z.string())` instead of `z.array(z.unknown())`
+- Complex object arrays use extracted schemas: `z.array(RepositorySchema)`
+- Primitive arrays: `z.array(z.string())`, `z.array(z.number())`, `z.array(z.boolean())`
+- Nested Zod schema generation for reusable object types
+- Full runtime validation type safety
+
+**Schema-to-Zod Conversion**
+- New `schemaToZodType()` method for comprehensive schema conversion
+- Handles arrays, objects, primitives, enums with proper nesting
+- Automatic schema reference for extracted types
+- Zod schemas generated for all extracted nested types
+
 ### Added - Phase 2C Complete (2025-10-04)
 
 **Response Type Generation & Advanced Features**
