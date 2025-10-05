@@ -6,7 +6,6 @@
  */
 
 import { Command } from 'commander';
-import chalk from 'chalk';
 import { config } from 'dotenv';
 
 import { generateCommand } from './commands/generate.js';

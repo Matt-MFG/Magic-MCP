@@ -6,7 +6,7 @@ import ora from 'ora';
 import { OpenAPIParser } from '@magic-mcp/parser';
 import { GeminiClient, MCPGenerator } from '@magic-mcp/generator';
 import { SecurityScanner } from '@magic-mcp/security';
-import { TargetLanguage, logger, LogLevel } from '@magic-mcp/shared';
+import { TargetLanguage, GenerationStrategy, CodeQualityLevel, logger, LogLevel } from '@magic-mcp/shared';
 
 interface GenerateOptions {
   output: string;
@@ -67,11 +67,22 @@ export async function generateCommand(
     const result = await generator.generate({
       apiSchema,
       name: options.name,
+      version: '1.0.0',
       options: {
         language: options.language as TargetLanguage,
+        strategy: GenerationStrategy.Optimized,
+        quality: CodeQualityLevel.Standard,
         includeTests: options.tests,
         includeDocs: options.docs,
+        includeExamples: true,
         securityHardening: true,
+        validateInput: true,
+        sanitizeOutput: true,
+        errorHandling: 'comprehensive' as const,
+        retryLogic: true,
+        rateLimit: true,
+        logging: 'detailed' as const,
+        aiEnhancement: true,
       },
     });
     spinner.succeed(

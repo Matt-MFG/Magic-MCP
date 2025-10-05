@@ -1,13 +1,15 @@
-import SwaggerParser from 'swagger-parser';
+import $RefParser from '@apidevtools/swagger-parser';
 import type { OpenAPI, OpenAPIV2, OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 
-import {
+import type {
   APISchema,
   APIEndpoint,
+  HTTPMethod,
+} from '@magic-mcp/shared';
+
+import {
   APIType,
   OpenAPIVersion,
-  HTTPMethod,
-  AuthType,
   ParseError,
   logger,
 } from '@magic-mcp/shared';
@@ -27,8 +29,12 @@ export class OpenAPIParser {
         inputType: typeof input,
       });
 
-      // Use swagger-parser to dereference and validate
-      const api = (await SwaggerParser.validate(input)) as OpenAPI.Document;
+      // First, parse without dereferencing to extract component names
+      const originalApi = await $RefParser.parse(input as string) as OpenAPI.Document;
+      const componentNames = this.extractComponentNames(originalApi);
+
+      // Then validate and dereference
+      const api = await $RefParser.validate(input as string) as OpenAPI.Document;
 
       // Detect version
       const version = this.detectVersion(api);
@@ -36,8 +42,8 @@ export class OpenAPIParser {
 
       // Parse based on version
       const schema = this.isV2(api)
-        ? this.parseV2(api as OpenAPIV2.Document)
-        : this.parseV3(api as OpenAPIV3.Document | OpenAPIV3_1.Document);
+        ? this.parseV2(api as OpenAPIV2.Document, componentNames)
+        : this.parseV3(api as OpenAPIV3.Document | OpenAPIV3_1.Document, componentNames);
 
       logger.info('Successfully parsed OpenAPI specification', {
         title: schema.info.title,
@@ -73,9 +79,37 @@ export class OpenAPIParser {
   }
 
   /**
+   * Extract component schema names from OpenAPI spec
+   */
+  private extractComponentNames(api: OpenAPI.Document): Record<string, string> {
+    const componentMap: Record<string, string> = {};
+
+    if ('components' in api && api.components && 'schemas' in api.components) {
+      const schemas = api.components.schemas as Record<string, unknown>;
+
+      for (const [name, schema] of Object.entries(schemas)) {
+        if (schema && typeof schema === 'object') {
+          // Create a hash of the schema for lookup later
+          try {
+            const schemaKey = JSON.stringify(schema);
+            componentMap[schemaKey] = name;
+          } catch (error) {
+            // Skip schemas that can't be stringified (circular refs)
+            logger.debug(`Skipping component schema ${name} (circular reference)`);
+          }
+        }
+      }
+
+      logger.debug(`Extracted ${Object.keys(componentMap).length} component schema names`);
+    }
+
+    return componentMap;
+  }
+
+  /**
    * Parse OpenAPI 2.0 (Swagger) specification
    */
-  private parseV2(api: OpenAPIV2.Document): APISchema {
+  private parseV2(api: OpenAPIV2.Document, componentNames: Record<string, string>): APISchema {
     const endpoints: APIEndpoint[] = [];
 
     // Parse paths
@@ -107,6 +141,9 @@ export class OpenAPIParser {
       endpoints,
       authentication: this.parseV2Auth(api),
       tags: api.tags || [],
+      components: {
+        schemas: componentNames,
+      },
       externalDocs: api.externalDocs,
     };
   }
@@ -192,16 +229,16 @@ export class OpenAPIParser {
 
   private parseV2Auth(api: OpenAPIV2.Document): APISchema['authentication'] {
     if (!api.securityDefinitions || Object.keys(api.securityDefinitions).length === 0) {
-      return { type: AuthType.None };
+      return { type: 'none' };
     }
 
     // Get first security definition (simplified for now)
-    const [firstKey, firstDef] = Object.entries(api.securityDefinitions)[0];
+    const [_firstKey, firstDef] = Object.entries(api.securityDefinitions)[0];
 
     switch (firstDef.type) {
       case 'apiKey':
         return {
-          type: AuthType.ApiKey,
+          type: 'apiKey',
           config: {
             name: firstDef.name,
             in: firstDef.in,
@@ -209,25 +246,23 @@ export class OpenAPIParser {
         };
       case 'oauth2':
         return {
-          type: AuthType.OAuth2,
+          type: 'oauth2',
           config: {
             flow: firstDef.flow,
-            authorizationUrl: firstDef.authorizationUrl,
-            tokenUrl: firstDef.tokenUrl,
             scopes: firstDef.scopes,
           },
         };
       case 'basic':
-        return { type: AuthType.Basic };
+        return { type: 'basic' };
       default:
-        return { type: AuthType.None };
+        return { type: 'none' };
     }
   }
 
   /**
    * Parse OpenAPI 3.x specification
    */
-  private parseV3(api: OpenAPIV3.Document | OpenAPIV3_1.Document): APISchema {
+  private parseV3(api: OpenAPIV3.Document | OpenAPIV3_1.Document, componentNames: Record<string, string>): APISchema {
     const endpoints: APIEndpoint[] = [];
 
     // Parse paths
@@ -259,6 +294,9 @@ export class OpenAPIParser {
       endpoints,
       authentication: this.parseV3Auth(api),
       tags: api.tags || [],
+      components: {
+        schemas: componentNames,
+      },
       externalDocs: api.externalDocs,
     };
   }
@@ -275,7 +313,7 @@ export class OpenAPIParser {
         in: p.in as 'query' | 'header' | 'path' | 'cookie',
         required: p.required || false,
         description: p.description,
-        schema: p.schema || {},
+        schema: (p.schema || {}) as Record<string, unknown>,
       };
     });
 
@@ -317,17 +355,17 @@ export class OpenAPIParser {
 
   private parseV3Auth(api: OpenAPIV3.Document | OpenAPIV3_1.Document): APISchema['authentication'] {
     if (!api.components?.securitySchemes) {
-      return { type: AuthType.None };
+      return { type: 'none' };
     }
 
     // Get first security scheme (simplified for now)
-    const [firstKey, firstScheme] = Object.entries(api.components.securitySchemes)[0];
+    const [_firstKey, firstScheme] = Object.entries(api.components.securitySchemes)[0];
     const scheme = firstScheme as OpenAPIV3.SecuritySchemeObject;
 
     switch (scheme.type) {
       case 'apiKey':
         return {
-          type: AuthType.ApiKey,
+          type: 'apiKey',
           config: {
             name: scheme.name,
             in: scheme.in,
@@ -336,25 +374,25 @@ export class OpenAPIParser {
       case 'http':
         if (scheme.scheme === 'bearer') {
           return {
-            type: AuthType.Bearer,
+            type: 'bearer',
             config: {
               bearerFormat: scheme.bearerFormat,
             },
           };
         }
         if (scheme.scheme === 'basic') {
-          return { type: AuthType.Basic };
+          return { type: 'basic' };
         }
-        return { type: AuthType.None };
+        return { type: 'none' };
       case 'oauth2':
         return {
-          type: AuthType.OAuth2,
+          type: 'oauth2',
           config: scheme.flows,
         };
-      case 'mutualTLS':
-        return { type: AuthType.MutualTls };
+      case 'openIdConnect':
+        return { type: 'none' };
       default:
-        return { type: AuthType.None };
+        return { type: 'none' };
     }
   }
 }

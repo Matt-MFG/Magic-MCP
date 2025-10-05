@@ -1,7 +1,11 @@
 import Handlebars from 'handlebars';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 import { format } from 'prettier';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 import {
   APISchema,
@@ -27,6 +31,9 @@ import { GeminiClient } from '../ai/gemini-client.js';
 export class MCPGenerator {
   private gemini: GeminiClient;
   private templates: Map<string, HandlebarsTemplateDelegate> = new Map();
+  private extractedSchemas: Map<string, { schema: unknown; name: string }> = new Map();
+  private schemaCounter = 0;
+  private componentSchemas: Record<string, string> = {};
 
   constructor(gemini: GeminiClient) {
     this.gemini = gemini;
@@ -46,21 +53,12 @@ export class MCPGenerator {
       return camel.charAt(0).toUpperCase() + camel.slice(1);
     });
 
-    Handlebars.registerHelper('eq', (a: unknown, b: unknown) => a === b);
-
-    Handlebars.registerHelper('zodType', (type: string) => {
-      const mapping: Record<string, string> = {
-        string: 'string',
-        number: 'number',
-        boolean: 'boolean',
-        object: 'object',
-        array: 'array',
-      };
-      return mapping[type] || 'unknown';
-    });
-
-    Handlebars.registerHelper('jsonSchemaType', (type: string) => {
-      return type || 'string';
+    Handlebars.registerHelper('eq', function(this: unknown, a: unknown, b: unknown, options: Handlebars.HelperOptions) {
+      if (a === b) {
+        return options.fn(this);
+      } else {
+        return options.inverse(this);
+      }
     });
   }
 
@@ -85,9 +83,16 @@ export class MCPGenerator {
    */
   async generate(request: GenerationRequest): Promise<GenerationResult> {
     const startTime = Date.now();
+
+    // Reset state for this generation
+    this.extractedSchemas.clear();
+    this.schemaCounter = 0;
+    this.componentSchemas = request.apiSchema.components?.schemas || {};
+
     logger.info('Starting MCP generation', {
       apiTitle: request.apiSchema.info.title,
       language: request.options?.language || 'typescript',
+      componentSchemaCount: Object.keys(this.componentSchemas).length,
     });
 
     try {
@@ -144,8 +149,18 @@ export class MCPGenerator {
   }> {
     logger.debug('Analyzing API schema with AI');
 
-    const schemaJson = JSON.stringify(apiSchema, null, 2);
-    return this.gemini.analyzeSchema(schemaJson);
+    try {
+      const schemaJson = JSON.stringify(apiSchema, null, 2);
+      return this.gemini.analyzeSchema(schemaJson);
+    } catch (error) {
+      // Handle circular references or very large schemas
+      logger.warn('Failed to stringify schema for AI analysis (possible circular reference)', { error });
+      return {
+        improvements: [],
+        securityConcerns: ['Schema contains circular references - manual review recommended'],
+        missingEndpoints: [],
+      };
+    }
   }
 
   /**
@@ -153,7 +168,7 @@ export class MCPGenerator {
    */
   private async createMCPSpec(
     request: GenerationRequest,
-    analysis: { improvements: string[]; securityConcerns: string[] }
+    _analysis: { improvements: string[]; securityConcerns: string[] }
   ): Promise<MCPServerSpec> {
     const { apiSchema } = request;
 
@@ -228,26 +243,37 @@ export class MCPGenerator {
 
     // Add path, query, header parameters
     for (const param of endpoint.parameters) {
+      const schema = param.schema as { type?: string; enum?: string[] };
       params.push({
         name: param.name,
         description: param.description || `${param.name} parameter`,
         type: this.schemaToType(param.schema),
         required: param.required,
+        enum: schema?.enum,
       });
     }
 
     // Add request body parameters (simplified)
     if (endpoint.requestBody?.content) {
-      const jsonContent = endpoint.requestBody.content['application/json'];
-      if (jsonContent && typeof jsonContent === 'object' && 'properties' in jsonContent) {
-        const properties = jsonContent.properties as Record<string, unknown>;
-        for (const [name, schema] of Object.entries(properties)) {
-          params.push({
-            name,
-            description: `${name} from request body`,
-            type: this.schemaToType(schema),
-            required: endpoint.requestBody.required,
-          });
+      // Try both JSON and form-encoded content types
+      const content = endpoint.requestBody.content['application/json']
+        || endpoint.requestBody.content['application/x-www-form-urlencoded']
+        || Object.values(endpoint.requestBody.content)[0];
+
+      if (content && typeof content === 'object' && 'schema' in content) {
+        const schema = content.schema as { properties?: Record<string, unknown>; required?: string[] };
+        if (schema.properties) {
+          const required = schema.required || [];
+          for (const [name, propSchema] of Object.entries(schema.properties)) {
+            const prop = propSchema as { type?: string; description?: string; enum?: string[] };
+            params.push({
+              name,
+              description: prop.description || `${name} from request body`,
+              type: this.schemaToType(propSchema),
+              required: required.includes(name),
+              enum: prop.enum,
+            });
+          }
         }
       }
     }
@@ -266,6 +292,221 @@ export class MCPGenerator {
     const s = schema as { type?: string };
     switch (s.type) {
       case 'integer':
+      case 'number':
+        return 'number';
+      case 'boolean':
+        return 'boolean';
+      case 'object':
+        return 'object';
+      case 'array':
+        return 'array';
+      default:
+        return 'string';
+    }
+  }
+
+  /**
+   * Convert our type to Zod type string
+   */
+  private typeToZodType(type: string, enumValues?: string[]): string {
+    // If enum values are provided, use z.enum
+    if (enumValues && enumValues.length > 0) {
+      const values = enumValues.map(v => `'${v}'`).join(', ');
+      return `enum([${values}])`;
+    }
+
+    switch (type) {
+      case 'string':
+        return 'string()';
+      case 'number':
+        return 'number()';
+      case 'boolean':
+        return 'boolean()';
+      case 'object':
+        return 'record(z.unknown())';
+      case 'array':
+        return 'array(z.unknown())';
+      default:
+        return 'unknown()';
+    }
+  }
+
+  /**
+   * Extract response type name from endpoint
+   */
+  private getResponseTypeName(endpoint: APIEndpoint): string {
+    // Use operation ID to generate type name
+    if (endpoint.operationId) {
+      const parts = endpoint.operationId.split('/').pop() || endpoint.operationId;
+      return parts
+        .split(/[-_]/)
+        .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+        .join('') + 'Response';
+    }
+
+    // Fallback to method + path
+    const method = endpoint.method.toLowerCase();
+    const pathParts = endpoint.path.split('/').filter(p => p && !p.startsWith('{'));
+    return pathParts
+      .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+      .join('') + method.charAt(0).toUpperCase() + method.slice(1) + 'Response';
+  }
+
+  /**
+   * Generate TypeScript interface from schema
+   */
+  private generateInterface(name: string, schema: unknown, indent = 0): string {
+    if (!schema || typeof schema !== 'object') {
+      return '';
+    }
+
+    const s = schema as {
+      type?: string;
+      properties?: Record<string, unknown>;
+      items?: unknown;
+      required?: string[];
+      description?: string;
+    };
+
+    const indentStr = '  '.repeat(indent);
+    let result = '';
+
+    if (s.type === 'object' && s.properties) {
+      result += `${indentStr}export interface ${name} {\n`;
+      const required = s.required || [];
+
+      for (const [propName, propSchema] of Object.entries(s.properties)) {
+        const prop = propSchema as { type?: string; description?: string; nullable?: boolean };
+        const optional = !required.includes(propName) || prop.nullable ? '?' : '';
+        const tsType = this.schemaToTypeScript(propSchema);
+
+        if (prop.description) {
+          result += `${indentStr}  /** ${prop.description} */\n`;
+        }
+        result += `${indentStr}  ${propName}${optional}: ${tsType};\n`;
+      }
+
+      result += `${indentStr}}\n`;
+    } else if (s.type === 'array' && s.items) {
+      const itemType = this.schemaToTypeScript(s.items);
+      result += `${indentStr}export type ${name} = ${itemType}[];\n`;
+    }
+
+    return result;
+  }
+
+  /**
+   * Convert JSON schema to TypeScript type
+   */
+  private schemaToTypeScript(schema: unknown): string {
+    if (!schema || typeof schema !== 'object') {
+      return 'unknown';
+    }
+
+    const s = schema as {
+      type?: string;
+      enum?: string[];
+      items?: unknown;
+      properties?: Record<string, unknown>;
+      nullable?: boolean;
+    };
+
+    let tsType: string;
+
+    if (s.enum) {
+      tsType = s.enum.map(v => `'${v}'`).join(' | ');
+    } else {
+      switch (s.type) {
+        case 'string':
+          tsType = 'string';
+          break;
+        case 'integer':
+        case 'number':
+          tsType = 'number';
+          break;
+        case 'boolean':
+          tsType = 'boolean';
+          break;
+        case 'array':
+          const itemType = s.items ? this.schemaToTypeScript(s.items) : 'unknown';
+          tsType = `${itemType}[]`;
+          break;
+        case 'object':
+          if (s.properties) {
+            // Check if this object should be extracted
+            if (this.shouldExtractNestedSchema(s)) {
+              const extractedName = this.extractNestedSchema(s);
+              tsType = extractedName;
+            } else {
+              // Inline object type
+              const props = Object.entries(s.properties).map(([name, propSchema]) => {
+                const propType = this.schemaToTypeScript(propSchema);
+                return `${name}: ${propType}`;
+              }).join('; ');
+              tsType = `{ ${props} }`;
+            }
+          } else {
+            tsType = 'Record<string, unknown>';
+          }
+          break;
+        default:
+          tsType = 'unknown';
+      }
+    }
+
+    return s.nullable ? `${tsType} | null` : tsType;
+  }
+
+  /**
+   * Check if a nested object schema should be extracted as a separate interface
+   */
+  private shouldExtractNestedSchema(schema: { properties?: Record<string, unknown> }): boolean {
+    if (!schema.properties) return false;
+
+    // Extract if it has 3 or more properties (significant complexity)
+    const propCount = Object.keys(schema.properties).length;
+    return propCount >= 3;
+  }
+
+  /**
+   * Extract a nested schema and return its type name
+   */
+  private extractNestedSchema(schema: { properties?: Record<string, unknown> }): string {
+    // Generate a hash or signature for deduplication
+    const schemaKey = JSON.stringify(schema);
+
+    // Check if this schema has a component name from OpenAPI spec
+    if (this.componentSchemas[schemaKey]) {
+      const componentName = this.componentSchemas[schemaKey];
+      // Store it so it gets generated
+      if (!this.extractedSchemas.has(schemaKey)) {
+        this.extractedSchemas.set(schemaKey, { schema, name: componentName });
+      }
+      return componentName;
+    }
+
+    // Check if we've already extracted this exact schema
+    if (this.extractedSchemas.has(schemaKey)) {
+      return this.extractedSchemas.get(schemaKey)!.name;
+    }
+
+    // Generate a name (fallback for schemas not in components)
+    this.schemaCounter++;
+    const name = `NestedType${this.schemaCounter}`;
+
+    // Store it
+    this.extractedSchemas.set(schemaKey, { schema, name });
+
+    return name;
+  }
+
+  /**
+   * Convert our type to JSON Schema type string
+   */
+  private typeToJsonSchemaType(type: string): string {
+    switch (type) {
+      case 'string':
+        return 'string';
       case 'number':
         return 'number';
       case 'boolean':
@@ -312,28 +553,123 @@ export class MCPGenerator {
     // Generate main server file
     const template = await this.loadTemplate('typescript-server');
 
-    const templateData = {
-      name: spec.config.name,
+    // Sanitize name for use in identifiers (replace hyphens with underscores)
+    const safeName = spec.config.name.replace(/-/g, '_');
+
+    const templateData: Record<string, unknown> = {
+      name: safeName,
       version: spec.config.version,
       description: spec.config.description,
       apiBaseUrl: request.apiSchema.servers[0]?.url || 'https://api.example.com',
       hasAuth: !!request.apiSchema.authentication && request.apiSchema.authentication.type !== 'none',
       authType: request.apiSchema.authentication?.type || 'none',
-      authEnvVar: `${spec.config.name.toUpperCase().replace(/-/g, '_')}_API_KEY`,
+      authEnvVar: `${safeName.toUpperCase()}_API_KEY`,
       authHeaderName: 'X-API-Key',
-      tools: spec.tools.map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: Object.values(tool.inputSchema.properties),
-        endpoint: this.findEndpointForTool(tool.name, request.apiSchema),
-        hasPathParams: false,
-        hasQueryParams: false,
-        hasBodyParams: false,
-        pathParams: [],
-        queryParams: [],
-        bodyParams: [],
-      })),
+      tools: spec.tools.map((tool) => {
+        const endpoint = this.findEndpointForTool(tool.name, request.apiSchema);
+        const params = Object.entries(tool.inputSchema.properties).map(([paramName, param]) => {
+          const toolParam = param as MCPToolParameter;
+          return {
+            ...toolParam,
+            name: paramName,
+            zodType: this.typeToZodType(toolParam.type, toolParam.enum),
+            jsonSchemaType: this.typeToJsonSchemaType(toolParam.type),
+          };
+        });
+
+        // Categorize parameters by location
+        const pathParams = endpoint?.parameters?.filter(p => p.in === 'path').map(p => ({
+          name: p.name,
+          ...params.find(param => param.name === p.name),
+        })) || [];
+
+        const queryParams = endpoint?.parameters?.filter(p => p.in === 'query').map(p => ({
+          name: p.name,
+          ...params.find(param => param.name === p.name),
+        })) || [];
+
+        const bodyParams = params.filter(p =>
+          !pathParams.some(pp => pp.name === p.name) &&
+          !queryParams.some(qp => qp.name === p.name)
+        );
+
+        // Extract response type
+        const responses = endpoint?.responses as Record<string, { content?: Record<string, { schema?: unknown }> }> | undefined;
+        const responseSchema = responses?.['200']?.content?.['application/json']?.schema
+          || responses?.['201']?.content?.['application/json']?.schema;
+        const responseTypeName = responseSchema && endpoint ? this.getResponseTypeName(endpoint) : undefined;
+
+        return {
+          name: tool.name,
+          description: tool.description,
+          parameters: params,
+          endpoint,
+          hasPathParams: pathParams.length > 0,
+          hasQueryParams: queryParams.length > 0,
+          hasBodyParams: bodyParams.length > 0,
+          pathParams,
+          queryParams,
+          bodyParams,
+          responseTypeName,
+          responseSchema,
+        };
+      }),
     };
+
+    // Deduplicate response schemas before generating interfaces
+    const tools = templateData.tools as Array<{ responseSchema?: unknown; responseTypeName: string }>;
+    const responseSchemaMap = new Map<string, { names: string[]; schema: unknown }>();
+
+    for (const tool of tools) {
+      if (tool.responseSchema) {
+        const schemaKey = JSON.stringify(tool.responseSchema);
+        const existing = responseSchemaMap.get(schemaKey);
+        if (existing) {
+          // Same schema - reuse the first name
+          existing.names.push(tool.responseTypeName);
+        } else {
+          responseSchemaMap.set(schemaKey, {
+            names: [tool.responseTypeName],
+            schema: tool.responseSchema
+          });
+        }
+      }
+    }
+
+    // Generate one interface per unique schema
+    const responseInterfaces = Array.from(responseSchemaMap.values())
+      .map(({ names, schema }) => {
+        const schemaKey = JSON.stringify(schema);
+
+        // Check if this schema has a component name
+        const componentName = this.componentSchemas[schemaKey];
+        const canonicalName = componentName || names[0];
+
+        const interfaceCode = this.generateInterface(canonicalName, schema);
+
+        // Add type aliases for all names (if using component name, alias all original names)
+        const namesToAlias = componentName ? names : names.slice(1);
+        const aliases = namesToAlias.map(alias =>
+          `export type ${alias} = ${canonicalName};`
+        ).join('\n');
+
+        return [interfaceCode, aliases].filter(Boolean).join('\n');
+      })
+      .filter(i => i)
+      .join('\n\n');
+
+    // Generate nested schema interfaces
+    const nestedInterfaces = Array.from(this.extractedSchemas.values())
+      .map(({ schema, name }) => this.generateInterface(name, schema))
+      .filter(i => i)
+      .join('\n');
+
+    // Combine all type interfaces (nested first, then responses)
+    const allInterfaces = [nestedInterfaces, responseInterfaces]
+      .filter(i => i)
+      .join('\n\n');
+
+    templateData.responseInterfaces = allInterfaces;
 
     const serverCode = template(templateData);
 
@@ -379,8 +715,8 @@ export class MCPGenerator {
    * Generate Python files (placeholder)
    */
   private async generatePythonFiles(
-    spec: MCPServerSpec,
-    request: GenerationRequest
+    _spec: MCPServerSpec,
+    _request: GenerationRequest
   ): Promise<GeneratedFile[]> {
     // TODO: Implement Python generation
     throw new GenerationError('Python generation not yet implemented');
@@ -424,7 +760,7 @@ export class MCPGenerator {
   /**
    * Generate package.json
    */
-  private generatePackageJson(spec: MCPServerSpec, request: GenerationRequest): object {
+  private generatePackageJson(spec: MCPServerSpec, _request: GenerationRequest): object {
     return {
       name: spec.config.name,
       version: spec.config.version,
@@ -473,7 +809,7 @@ export class MCPGenerator {
   /**
    * Generate README.md
    */
-  private generateReadme(spec: MCPServerSpec, request: GenerationRequest): string {
+  private generateReadme(spec: MCPServerSpec, _request: GenerationRequest): string {
     return `# ${spec.config.name}
 
 ${spec.config.description}

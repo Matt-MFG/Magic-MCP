@@ -1,0 +1,349 @@
+openapi: 3.0.3
+info:
+  title: GitHub Repositories API (Subset)
+  description: Subset of GitHub API for testing MCP generation - Repository endpoints
+  version: 1.1.4
+  contact:
+    name: GitHub Support
+    url: https://support.github.com
+
+servers:
+  - url: https://api.github.com
+    description: GitHub API
+
+security:
+  - BearerAuth: []
+
+paths:
+  /user/repos:
+    get:
+      summary: List repositories for the authenticated user
+      description: Lists repositories that the authenticated user has explicit permission to access
+      operationId: repos/list-for-authenticated-user
+      tags:
+        - repos
+      parameters:
+        - name: visibility
+          in: query
+          description: Limit results to repositories with the specified visibility
+          schema:
+            type: string
+            enum: [all, public, private]
+            default: all
+        - name: affiliation
+          in: query
+          description: Comma-separated list of values (owner, collaborator, organization_member)
+          schema:
+            type: string
+            default: owner,collaborator,organization_member
+        - name: type
+          in: query
+          description: Limit results to repositories of the specified type
+          schema:
+            type: string
+            enum: [all, owner, public, private, member]
+            default: all
+        - name: sort
+          in: query
+          description: The property to sort the results by
+          schema:
+            type: string
+            enum: [created, updated, pushed, full_name]
+            default: full_name
+        - name: direction
+          in: query
+          description: The order to sort by
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: asc
+        - name: per_page
+          in: query
+          description: The number of results per page (max 100)
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 30
+        - name: page
+          in: query
+          description: Page number of the results to fetch
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: Response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Repository'
+
+    post:
+      summary: Create a repository for the authenticated user
+      description: Creates a new repository for the authenticated user
+      operationId: repos/create-for-authenticated-user
+      tags:
+        - repos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
+                  description: The name of the repository
+                  pattern: ^[a-zA-Z0-9._-]+$
+                description:
+                  type: string
+                  description: A short description of the repository
+                homepage:
+                  type: string
+                  description: A URL with more information about the repository
+                private:
+                  type: boolean
+                  description: Whether the repository is private
+                  default: false
+                has_issues:
+                  type: boolean
+                  description: Whether issues are enabled
+                  default: true
+                has_projects:
+                  type: boolean
+                  description: Whether projects are enabled
+                  default: true
+                has_wiki:
+                  type: boolean
+                  description: Whether the wiki is enabled
+                  default: true
+                auto_init:
+                  type: boolean
+                  description: Whether to create an initial commit with empty README
+                  default: false
+                gitignore_template:
+                  type: string
+                  description: Desired language or platform .gitignore template
+                license_template:
+                  type: string
+                  description: Choose an open source license template
+      responses:
+        '201':
+          description: Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+
+  /repos/{owner}/{repo}:
+    get:
+      summary: Get a repository
+      description: Gets a repository using the repository's owner and name
+      operationId: repos/get
+      tags:
+        - repos
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          description: The account owner of the repository
+          schema:
+            type: string
+        - name: repo
+          in: path
+          required: true
+          description: The name of the repository
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+
+    patch:
+      summary: Update a repository
+      description: Updates a repository using the repository's owner and name
+      operationId: repos/update
+      tags:
+        - repos
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          description: The account owner of the repository
+          schema:
+            type: string
+        - name: repo
+          in: path
+          required: true
+          description: The name of the repository
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: The name of the repository
+                description:
+                  type: string
+                  description: A short description of the repository
+                homepage:
+                  type: string
+                  description: A URL with more information about the repository
+                private:
+                  type: boolean
+                  description: Whether the repository is private
+                has_issues:
+                  type: boolean
+                  description: Whether issues are enabled
+                has_projects:
+                  type: boolean
+                  description: Whether projects are enabled
+                has_wiki:
+                  type: boolean
+                  description: Whether the wiki is enabled
+                default_branch:
+                  type: string
+                  description: Updates the default branch for this repository
+                archived:
+                  type: boolean
+                  description: Whether to archive this repository
+      responses:
+        '200':
+          description: Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+
+    delete:
+      summary: Delete a repository
+      description: Deleting a repository requires admin access
+      operationId: repos/delete
+      tags:
+        - repos
+      parameters:
+        - name: owner
+          in: path
+          required: true
+          description: The account owner of the repository
+          schema:
+            type: string
+        - name: repo
+          in: path
+          required: true
+          description: The name of the repository
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Response - No Content
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: GitHub uses personal access tokens for authentication
+
+  schemas:
+    Repository:
+      type: object
+      required:
+        - id
+        - node_id
+        - name
+        - full_name
+        - owner
+        - private
+        - html_url
+        - description
+        - fork
+        - url
+      properties:
+        id:
+          type: integer
+          description: Unique identifier of the repository
+        node_id:
+          type: string
+          description: GraphQL node ID
+        name:
+          type: string
+          description: The name of the repository
+        full_name:
+          type: string
+          description: The full name of the repository including owner
+        owner:
+          type: object
+          description: Simple User
+          properties:
+            login:
+              type: string
+            id:
+              type: integer
+        private:
+          type: boolean
+          description: Whether the repository is private
+        html_url:
+          type: string
+          format: uri
+          description: URL to the repository on GitHub
+        description:
+          type: string
+          nullable: true
+          description: The description of the repository
+        fork:
+          type: boolean
+          description: Whether this repository is a fork
+        url:
+          type: string
+          format: uri
+          description: API URL for the repository
+        created_at:
+          type: string
+          format: date-time
+          description: When the repository was created
+        updated_at:
+          type: string
+          format: date-time
+          description: When the repository was last updated
+        pushed_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the repository was last pushed to
+        size:
+          type: integer
+          description: The size of the repository in KB
+        stargazers_count:
+          type: integer
+          description: Number of stars
+        watchers_count:
+          type: integer
+          description: Number of watchers
+        language:
+          type: string
+          nullable: true
+          description: The primary programming language
+        forks_count:
+          type: integer
+          description: Number of forks
+        open_issues_count:
+          type: integer
+          description: Number of open issues
+        default_branch:
+          type: string
+          description: The default branch name

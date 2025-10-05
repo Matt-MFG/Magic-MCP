@@ -74,7 +74,16 @@ export class GeminiClient {
       }
 
       const candidate = response.candidates[0];
-      const text = candidate.content.parts.map((part) => part.text).join('');
+      let text = candidate.content.parts.map((part) => part.text).join('');
+
+      // Decode HTML entities that Gemini sometimes adds
+      text = text
+        .replace(/&#x27;/g, "'")
+        .replace(/&#39;/g, "'")
+        .replace(/&quot;/g, '"')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
 
       const tokensUsed = response.usageMetadata
         ? response.usageMetadata.totalTokenCount || 0

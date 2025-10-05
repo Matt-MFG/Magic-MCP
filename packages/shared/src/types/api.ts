@@ -114,6 +114,9 @@ export const APISchemaSchema = z.object({
     name: z.string(),
     description: z.string().optional(),
   })).default([]),
+  components: z.object({
+    schemas: z.record(z.string()).optional(), // Map of schema hash → component name
+  }).optional(),
   externalDocs: z.object({
     description: z.string().optional(),
     url: z.string().url(),

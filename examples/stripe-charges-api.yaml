@@ -1,0 +1,269 @@
+openapi: 3.0.0
+info:
+  title: Stripe Charges API (Subset)
+  description: Subset of Stripe API for testing MCP generation - Charges endpoints
+  version: 2024-11-20
+  contact:
+    name: Stripe Support
+    url: https://support.stripe.com
+    email: support@stripe.com
+
+servers:
+  - url: https://api.stripe.com/v1
+    description: Production server
+
+security:
+  - bearer: []
+
+paths:
+  /charges:
+    get:
+      summary: List all charges
+      description: Returns a list of charges you've previously created
+      operationId: GetCharges
+      tags:
+        - Charges
+      parameters:
+        - name: limit
+          in: query
+          description: A limit on the number of objects to be returned
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 10
+        - name: customer
+          in: query
+          description: Only return charges for the customer specified by this customer ID
+          required: false
+          schema:
+            type: string
+        - name: created
+          in: query
+          description: A filter on the list based on the object created field
+          required: false
+          schema:
+            type: object
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  object:
+                    type: string
+                    enum: [list]
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Charge'
+                  has_more:
+                    type: boolean
+                  url:
+                    type: string
+
+    post:
+      summary: Create a charge
+      description: To charge a credit or debit card, you create a Charge object
+      operationId: PostCharges
+      tags:
+        - Charges
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - amount
+                - currency
+              properties:
+                amount:
+                  type: integer
+                  description: Amount intended to be collected by this payment in cents
+                  minimum: 0
+                currency:
+                  type: string
+                  description: Three-letter ISO currency code
+                  minLength: 3
+                  maxLength: 3
+                customer:
+                  type: string
+                  description: The ID of an existing customer that will be charged
+                source:
+                  type: string
+                  description: A payment source to be charged (card, bank account, etc)
+                description:
+                  type: string
+                  description: An arbitrary string to attach to the object
+                  maxLength: 1000
+                metadata:
+                  type: object
+                  description: Set of key-value pairs for storing additional information
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Charge'
+
+  /charges/{charge}:
+    get:
+      summary: Retrieve a charge
+      description: Retrieves the details of a charge that has previously been created
+      operationId: GetChargesCharge
+      tags:
+        - Charges
+      parameters:
+        - name: charge
+          in: path
+          description: The identifier of the charge to retrieve
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Charge'
+
+    post:
+      summary: Update a charge
+      description: Updates the specified charge by setting the values of the parameters passed
+      operationId: PostChargesCharge
+      tags:
+        - Charges
+      parameters:
+        - name: charge
+          in: path
+          description: The identifier of the charge to update
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                description:
+                  type: string
+                  description: An arbitrary string to attach to the object
+                  maxLength: 1000
+                metadata:
+                  type: object
+                  description: Set of key-value pairs for storing additional information
+                fraud_details:
+                  type: object
+                  description: Fraud details for the charge
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Charge'
+
+  /charges/{charge}/capture:
+    post:
+      summary: Capture a charge
+      description: Capture the payment of an existing, uncaptured charge
+      operationId: PostChargesChargeCapture
+      tags:
+        - Charges
+      parameters:
+        - name: charge
+          in: path
+          description: The identifier of the charge to capture
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: integer
+                  description: The amount to capture (defaults to full amount)
+                  minimum: 0
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Charge'
+
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: Stripe uses API keys to authenticate requests
+
+  schemas:
+    Charge:
+      type: object
+      required:
+        - id
+        - object
+        - amount
+        - currency
+        - created
+        - livemode
+        - paid
+        - status
+      properties:
+        id:
+          type: string
+          description: Unique identifier for the object
+        object:
+          type: string
+          enum: [charge]
+          description: String representing the object's type
+        amount:
+          type: integer
+          description: Amount intended to be collected
+        amount_captured:
+          type: integer
+          description: Amount captured
+        amount_refunded:
+          type: integer
+          description: Amount refunded
+        currency:
+          type: string
+          description: Three-letter ISO currency code
+        customer:
+          type: string
+          nullable: true
+          description: ID of the customer this charge is for
+        description:
+          type: string
+          nullable: true
+          description: An arbitrary string attached to the object
+        created:
+          type: integer
+          description: Time at which the object was created (Unix timestamp)
+        livemode:
+          type: boolean
+          description: Has the value true if the object exists in live mode
+        paid:
+          type: boolean
+          description: Whether the charge has been paid
+        status:
+          type: string
+          enum: [succeeded, pending, failed]
+          description: The status of the payment
+        metadata:
+          type: object
+          description: Set of key-value pairs

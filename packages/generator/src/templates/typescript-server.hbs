@@ -30,12 +30,17 @@ const CONFIG = {
 };
 
 /**
+ * Response Types
+ */
+{{{responseInterfaces}}}
+
+/**
  * Validation Schemas
  */
 {{#each tools}}
 const {{pascalCase name}}Schema = z.object({
   {{#each parameters}}
-  {{name}}: z.{{zodType}}(){{#if required}}{{else}}.optional(){{/if}}{{#if description}}.describe('{{description}}'){{/if}},
+  {{name}}: z.{{{zodType}}}{{#if required}}{{else}}.optional(){{/if}}{{#if description}}.describe('{{description}}'){{/if}},
   {{/each}}
 });
 
@@ -105,7 +110,7 @@ class {{pascalCase name}}Client {
   /**
    * {{description}}
    */
-  async {{camelCase name}}(params: z.infer<typeof {{pascalCase name}}Schema>): Promise<unknown> {
+  async {{camelCase name}}(params: z.infer<typeof {{pascalCase name}}Schema>): Promise<{{#if responseTypeName}}{{responseTypeName}}{{else}}unknown{{/if}}> {
     {{#if hasPathParams}}
     // Build path with parameters
     let path = '{{endpoint.path}}';
