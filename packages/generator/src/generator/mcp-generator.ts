@@ -738,13 +738,28 @@ export class MCPGenerator {
         const componentName = this.componentSchemas[schemaKey];
         const canonicalName = componentName || names[0];
 
-        const interfaceCode = this.generateInterface(canonicalName, schema);
+        // Check if already extracted as nested schema
+        const alreadyExtracted = this.extractedSchemas.has(schemaKey);
 
-        // Add type aliases for all names (if using component name, alias all original names)
-        const namesToAlias = componentName ? names : names.slice(1);
-        const aliases = namesToAlias.map(alias =>
-          `export type ${alias} = ${canonicalName};`
-        ).join('\n');
+        let interfaceCode = '';
+        if (!alreadyExtracted) {
+          // Only generate interface if not already extracted
+          interfaceCode = this.generateInterface(canonicalName, schema);
+        }
+
+        // Get the name from extracted schemas if it exists
+        const extractedName = alreadyExtracted ? this.extractedSchemas.get(schemaKey)!.name : null;
+        const referenceName = extractedName || canonicalName;
+
+        // Add type aliases for all names
+        const namesToAlias = alreadyExtracted
+          ? names  // Alias all names if already extracted
+          : (componentName ? names : names.slice(1));  // Otherwise follow existing logic
+
+        const aliases = namesToAlias
+          .filter(name => name !== referenceName)  // Don't alias to itself
+          .map(alias => `export type ${alias} = ${referenceName};`)
+          .join('\n');
 
         return [interfaceCode, aliases].filter(Boolean).join('\n');
       })
