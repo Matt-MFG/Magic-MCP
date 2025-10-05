@@ -37,6 +37,10 @@ const CONFIG = {
 /**
  * Validation Schemas
  */
+{{#if nestedZodSchemas}}
+{{{nestedZodSchemas}}}
+
+{{/if}}
 {{#each tools}}
 const {{pascalCase name}}Schema = z.object({
   {{#each parameters}}

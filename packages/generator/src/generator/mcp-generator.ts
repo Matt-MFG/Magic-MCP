@@ -243,13 +243,14 @@ export class MCPGenerator {
 
     // Add path, query, header parameters
     for (const param of endpoint.parameters) {
-      const schema = param.schema as { type?: string; enum?: string[] };
+      const schema = param.schema as { type?: string; enum?: string[]; items?: unknown };
       params.push({
         name: param.name,
         description: param.description || `${param.name} parameter`,
         type: this.schemaToType(param.schema),
         required: param.required,
         enum: schema?.enum,
+        items: schema?.items, // Store array item schema for Zod generation
       });
     }
 
@@ -265,13 +266,14 @@ export class MCPGenerator {
         if (schema.properties) {
           const required = schema.required || [];
           for (const [name, propSchema] of Object.entries(schema.properties)) {
-            const prop = propSchema as { type?: string; description?: string; enum?: string[] };
+            const prop = propSchema as { type?: string; description?: string; enum?: string[]; items?: unknown };
             params.push({
               name,
               description: prop.description || `${name} from request body`,
               type: this.schemaToType(propSchema),
               required: required.includes(name),
               enum: prop.enum,
+              items: prop.items, // Store array item schema for Zod generation
             });
           }
         }
@@ -306,29 +308,77 @@ export class MCPGenerator {
   }
 
   /**
-   * Convert our type to Zod type string
+   * Convert JSON schema to Zod type (with full schema support including arrays)
    */
-  private typeToZodType(type: string, enumValues?: string[]): string {
-    // If enum values are provided, use z.enum
-    if (enumValues && enumValues.length > 0) {
-      const values = enumValues.map(v => `'${v}'`).join(', ');
-      return `enum([${values}])`;
+  private schemaToZodType(schema: unknown): string {
+    if (!schema || typeof schema !== 'object') {
+      return 'unknown()';
     }
 
-    switch (type) {
-      case 'string':
-        return 'string()';
-      case 'number':
-        return 'number()';
-      case 'boolean':
-        return 'boolean()';
-      case 'object':
-        return 'record(z.unknown())';
-      case 'array':
-        return 'array(z.unknown())';
-      default:
-        return 'unknown()';
+    const s = schema as {
+      type?: string;
+      enum?: string[];
+      items?: unknown;
+      properties?: Record<string, unknown>;
+      nullable?: boolean;
+    };
+
+    let zodType: string;
+
+    if (s.enum) {
+      const values = s.enum.map(v => `'${v}'`).join(', ');
+      zodType = `enum([${values}])`;
+    } else {
+      switch (s.type) {
+        case 'string':
+          zodType = 'string()';
+          break;
+        case 'integer':
+        case 'number':
+          zodType = 'number()';
+          break;
+        case 'boolean':
+          zodType = 'boolean()';
+          break;
+        case 'array':
+          if (s.items) {
+            const itemSchema = s.items as {
+              type?: string;
+              properties?: Record<string, unknown>;
+            };
+
+            // Check if array items are objects that should be extracted
+            if (itemSchema.type === 'object' && itemSchema.properties && this.shouldExtractNestedSchema(itemSchema as { properties: Record<string, unknown> })) {
+              const extractedName = this.extractNestedSchema(itemSchema as { properties: Record<string, unknown> });
+              zodType = `array(${extractedName}Schema)`;
+            } else {
+              const itemType = this.schemaToZodType(s.items);
+              // Nested items need z. prefix since template only adds it at top level
+              zodType = `array(z.${itemType})`;
+            }
+          } else {
+            zodType = 'array(z.unknown())';
+          }
+          break;
+        case 'object':
+          if (s.properties) {
+            // For complex objects, extract as separate schema
+            if (this.shouldExtractNestedSchema(s as { properties: Record<string, unknown> })) {
+              const extractedName = this.extractNestedSchema(s as { properties: Record<string, unknown> });
+              zodType = `${extractedName}Schema`;
+            } else {
+              zodType = 'record(z.unknown())';
+            }
+          } else {
+            zodType = 'record(z.unknown())';
+          }
+          break;
+        default:
+          zodType = 'unknown()';
+      }
     }
+
+    return s.nullable ? `${zodType}.nullable()` : zodType;
   }
 
   /**
@@ -393,6 +443,41 @@ export class MCPGenerator {
     }
 
     return result;
+  }
+
+  /**
+   * Generate Zod schema for a type
+   */
+  private generateZodSchema(name: string, schema: unknown): string {
+    if (!schema || typeof schema !== 'object') {
+      return '';
+    }
+
+    const s = schema as {
+      type?: string;
+      properties?: Record<string, unknown>;
+      items?: unknown;
+      required?: string[];
+    };
+
+    if (s.type === 'object' && s.properties) {
+      const required = s.required || [];
+      const props = Object.entries(s.properties).map(([propName, propSchema]) => {
+        const zodType = this.schemaToZodType(propSchema);
+        const isRequired = required.includes(propName);
+        const optional = isRequired ? '' : '.optional()';
+        const propDesc = (propSchema as { description?: string })?.description;
+        const describe = propDesc ? `.describe('${propDesc.replace(/'/g, "\\'")}')` : '';
+        return `  ${propName}: z.${zodType}${optional}${describe},`;
+      }).join('\n');
+
+      return `export const ${name}Schema = z.object({\n${props}\n});`;
+    } else if (s.type === 'array' && s.items) {
+      const itemType = this.schemaToZodType(s.items);
+      return `export const ${name}Schema = z.array(z.${itemType});`;
+    }
+
+    return '';
   }
 
   /**
@@ -569,10 +654,18 @@ export class MCPGenerator {
         const endpoint = this.findEndpointForTool(tool.name, request.apiSchema);
         const params = Object.entries(tool.inputSchema.properties).map(([paramName, param]) => {
           const toolParam = param as MCPToolParameter;
+
+          // Reconstruct schema object for schemaToZodType
+          const schema: { type?: string; enum?: string[]; items?: unknown } = {
+            type: toolParam.type,
+          };
+          if (toolParam.enum) schema.enum = toolParam.enum;
+          if (toolParam.items) schema.items = toolParam.items;
+
           return {
             ...toolParam,
             name: paramName,
-            zodType: this.typeToZodType(toolParam.type, toolParam.enum),
+            zodType: this.schemaToZodType(schema),
             jsonSchemaType: this.typeToJsonSchemaType(toolParam.type),
           };
         });
@@ -664,12 +757,19 @@ export class MCPGenerator {
       .filter(i => i)
       .join('\n');
 
+    // Generate Zod schemas for nested types
+    const nestedZodSchemas = Array.from(this.extractedSchemas.values())
+      .map(({ schema, name }) => this.generateZodSchema(name, schema))
+      .filter(i => i)
+      .join('\n\n');
+
     // Combine all type interfaces (nested first, then responses)
     const allInterfaces = [nestedInterfaces, responseInterfaces]
       .filter(i => i)
       .join('\n\n');
 
     templateData.responseInterfaces = allInterfaces;
+    templateData.nestedZodSchemas = nestedZodSchemas;
 
     const serverCode = template(templateData);
 
