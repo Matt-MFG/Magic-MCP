@@ -53,7 +53,16 @@ export class MCPGenerator {
       return camel.charAt(0).toUpperCase() + camel.slice(1);
     });
 
-    Handlebars.registerHelper('eq', function(this: unknown, a: unknown, b: unknown, options: Handlebars.HelperOptions) {
+    Handlebars.registerHelper('eq', function(this: unknown, a: unknown, b: unknown, options?: Handlebars.HelperOptions) {
+      // Used as subexpression {{#if (eq a b)}} - no options param
+      if (typeof options === 'undefined') {
+        return a === b;
+      }
+      // Used as block helper {{#eq a b}} - options param present
+      if (typeof options.fn !== 'function') {
+        // Fallback: return boolean if options exists but fn doesn't
+        return a === b;
+      }
       if (a === b) {
         return options.fn(this);
       } else {
@@ -823,6 +832,19 @@ export class MCPGenerator {
       size: readme.length,
     });
 
+    // Generate tests if requested
+    if (request.options?.includeTests) {
+      const testTemplate = await this.loadTemplate('typescript-test');
+      const testCode = testTemplate(templateData);
+      files.push({
+        path: 'src/index.test.ts',
+        content: testCode,
+        type: 'test',
+        language: 'typescript',
+        size: testCode.length,
+      });
+    }
+
     return files;
   }
 
@@ -875,7 +897,30 @@ export class MCPGenerator {
   /**
    * Generate package.json
    */
-  private generatePackageJson(spec: MCPServerSpec, _request: GenerationRequest): object {
+  private generatePackageJson(spec: MCPServerSpec, request: GenerationRequest): object {
+    const scripts: Record<string, string> = {
+      build: 'tsc',
+      dev: 'tsc --watch',
+      start: 'node dist/index.js',
+    };
+
+    const devDependencies: Record<string, string> = {
+      '@types/node': '^20.11.5',
+      typescript: '^5.3.3',
+    };
+
+    // Add test script and dependencies if tests are enabled
+    if (request.options?.includeTests) {
+      scripts.test = 'vitest run';
+      scripts['test:watch'] = 'vitest';
+      scripts['test:ui'] = 'vitest --ui';
+      scripts['test:coverage'] = 'vitest run --coverage';
+
+      devDependencies.vitest = '^1.2.0';
+      devDependencies['@vitest/ui'] = '^1.2.0';
+      devDependencies['@vitest/coverage-v8'] = '^1.2.0';
+    }
+
     return {
       name: spec.config.name,
       version: spec.config.version,
@@ -884,19 +929,12 @@ export class MCPGenerator {
       bin: {
         [spec.config.name]: './dist/index.js',
       },
-      scripts: {
-        build: 'tsc',
-        dev: 'tsc --watch',
-        start: 'node dist/index.js',
-      },
+      scripts,
       dependencies: {
         '@modelcontextprotocol/sdk': '^0.5.0',
         zod: '^3.22.4',
       },
-      devDependencies: {
-        '@types/node': '^20.11.5',
-        typescript: '^5.3.3',
-      },
+      devDependencies,
     };
   }
 
@@ -917,7 +955,7 @@ export class MCPGenerator {
         forceConsistentCasingInFileNames: true,
       },
       include: ['src/**/*'],
-      exclude: ['node_modules', 'dist'],
+      exclude: ['node_modules', 'dist', 'src/**/*.test.ts'],
     };
   }
 
