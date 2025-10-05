@@ -845,6 +845,34 @@ export class MCPGenerator {
       });
     }
 
+    // Generate deployment configurations
+    const dockerfileTemplate = await this.loadTemplate('dockerfile');
+    const dockerfile = dockerfileTemplate(templateData);
+    files.push({
+      path: 'Dockerfile',
+      content: dockerfile,
+      type: 'config',
+      size: dockerfile.length,
+    });
+
+    const cloudRunTemplate = await this.loadTemplate('cloudrun.yaml');
+    const cloudRunConfig = cloudRunTemplate(templateData);
+    files.push({
+      path: 'deploy/cloudrun.yaml',
+      content: cloudRunConfig,
+      type: 'config',
+      size: cloudRunConfig.length,
+    });
+
+    const lambdaTemplate = await this.loadTemplate('lambda.yaml');
+    const lambdaConfig = lambdaTemplate(templateData);
+    files.push({
+      path: 'deploy/lambda.yaml',
+      content: lambdaConfig,
+      type: 'config',
+      size: lambdaConfig.length,
+    });
+
     return files;
   }
 
